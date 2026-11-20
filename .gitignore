@@ -1,0 +1,16 @@
+# 執行期產生的工具安裝目錄、沙盒資料與使用者工作區
+/apps/
+/data/
+/workspace/
+
+# 打包產出的單一執行檔（建議透過 GitHub Releases 分發）
+PortableDEV_*.bat
+
+# 開發輔助匯出檔
+code_dump.txt
+
+# Windows 與編輯器系統暫存檔
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/

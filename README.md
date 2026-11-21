@@ -91,5 +91,3 @@ PortableDEV/
 ## 📄 授權條款
 
 * 本專案採用 MIT License 授權。整合之第三方工具（Git、OpenJDK、uv、Node.js、Android SDK、VS Code、Antigravity CLI）各自受其原始授權條款規範。
-
-### 2. 邊緣情境 Bug：空白目錄下執行 `[C] 清理快取` 時 `apps` 尚未建立 * **位置**：`_modules\updater.ps1` 第 33 行 * **問題原因**：如果使用者剛下載單檔 `.bat` 放入空資料夾，**還沒安裝任何工具**就直接進入 `[U] 工具更新中心` 並按 `[C] 清理快取`，雖然 `Initialize-PortableDirs` 在開頭有建立 `apps`，但若手動刪過 `apps` 資料夾，`Get-ChildItem -Path $appsDir` 在沒有 `-ErrorAction SilentlyContinue` 的情況下雖然有加，但保險起見先檢查 `Test-Path $appsDir` 更嚴謹。

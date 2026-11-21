@@ -2,15 +2,11 @@
 
 **PortableDEV** 是一套專為 Windows 設計的輕量、免安裝、沙盒隔離式開發環境整合工具。無需系統管理員權限，也不會寫入系統環境變數或登錄檔；只需將資料夾放入隨身碟或雲端硬碟，就能在任意 Windows 電腦上隨插即用。
 
----
-
 ## 🎯 開發動機與應用場景
 
 由於個人不希望偶爾使用的開發工具散落並污染 Windows 系統環境，因此將常用工具整合進單一沙盒啟動器中。目前主要應用於**輕量級工具開發**、**AI 輔助程式碼生成**以及 **Android ADB 系統調校**。
 
 例如搭配近期流行的 [Clean Your TV](https://github.com/Gathin23/cleanyourtv)，即使不依賴 AI 工具，也能直接啟動本專案的 Android 除錯環境，透過 `adb` 指令手動為 Android TV 進行系統精簡與最佳化。
-
----
 
 ## 🧰 整合工具清單
 
@@ -26,8 +22,6 @@
 | **Android SDK** | [Android Developers](https://developer.android.com/) | Android 官方命令列工具組；安裝時自動簽署授權並預裝 `platform-tools`（內含 `adb` 與 `fastboot`），免裝龐大的 Android Studio 即可連接手機或 Android TV 除錯。 |
 | **VS Code** | [Visual Studio Code](https://code.visualstudio.com/) | 輕量級跨平台程式碼編輯器；自動啟用可攜模式（`VSCODE_PORTABLE`），預裝繁體中文語系與 Python 擴充套件，並於每次啟動時自動同步沙盒內的 JDK 與 Python 路徑。 |
 | **Antigravity CLI** | [Antigravity](https://antigravity.google/) | AI 輔助開發與自動化命令列工具；支援自動偵測系統架構，並將認證與設定檔隔離儲存於 `data\agy-home` 目錄內。 |
-
----
 
 ## 🚀 快速開始
 
@@ -47,8 +41,6 @@ cd PortableDEV
 ```
 
 2. 執行根目錄下的 start.bat 即可開啟啟動器主選單。
-
----
 
 ## 📁 目錄結構說明
 
@@ -78,15 +70,11 @@ PortableDEV/
 └── workspace/                # [執行期自動產生] 預設開發專案工作區
 ```
 
----
-
 ## 📋 系統需求
 
 * 作業系統：Windows 10 / Windows 11（需要 PowerShell 5.1 與 curl.exe）
 * 架構：x64
 * 權限需求：無需系統管理員權限
-
----
 
 ## 📄 授權條款
 

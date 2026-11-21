@@ -1,6 +1,8 @@
 ﻿param([string]$RootDir, [string]$ToolKey = "agy", [string]$Mode = "install")
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) "core.psm1") -Force
+$modRoot = Split-Path -Parent $PSScriptRoot
+if (-not (Get-Module -Name "ui"))   { Import-Module (Join-Path $modRoot "ui.psm1") -Global }
+if (-not (Get-Module -Name "core")) { Import-Module (Join-Path $modRoot "core.psm1") -Global }
 
 $meta = Get-ToolMeta -RootDir $RootDir -ToolKey $ToolKey
 

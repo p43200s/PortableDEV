@@ -1,6 +1,8 @@
 ﻿param([string]$RootDir, [string]$ToolKey = "android", [string]$Mode = "install")
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) "core.psm1") -Force
+$modRoot = Split-Path -Parent $PSScriptRoot
+if (-not (Get-Module -Name "ui"))   { Import-Module (Join-Path $modRoot "ui.psm1") -Global }
+if (-not (Get-Module -Name "core")) { Import-Module (Join-Path $modRoot "core.psm1") -Global }
 
 $meta = Get-ToolMeta -RootDir $RootDir -ToolKey $ToolKey
 
@@ -9,7 +11,7 @@ if ($html -match 'commandlinetools-win-(\d+)_latest\.zip') {
     $ver = $Matches[1]
     $url = "https://dl.google.com/android/repository/commandlinetools-win-${ver}_latest.zip"
 } else {
-    throw "無法從 Android 官網解析 Command-line Tools 版本"
+    throw "無法從 Android 官方網站解析 Command-line Tools 版本"
 }
 
 if ($Mode -eq "query") { return @{ Version = $ver; Url = $url } }
@@ -28,20 +30,26 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $latestDir) -Force | Out-
 Move-Item -Path (Join-Path $tmpDir "cmdline-tools") -Destination $latestDir
 Remove-Item $tmpDir -Recurse -Force
 
-# 若本機已安裝過 SDK 平台套件，呼叫官方 sdkmanager 同步升級 platform-tools / platforms / build-tools
+# 透過 sdkmanager 自動接受所有授權並安裝/更新 platform-tools (ADB / Fastboot)
 $sdkManager = Join-Path $latestDir "bin\sdkmanager.bat"
-if ((Test-Path (Join-Path $targetDir "platform-tools")) -and (Test-Path $sdkManager)) {
-    Write-Host "[INFO] 偵測到已安裝 Android 平台套件，正在透過 sdkmanager 檢查並更新..." -ForegroundColor Cyan
-    Set-SandboxEnvironment -RootDir $RootDir
-    $env:ANDROID_HOME = $targetDir
+if (Test-Path $sdkManager) {
     $jdk17Meta = Get-ToolMeta -RootDir $RootDir -ToolKey "jdk17"
-    $jdk17Dir  = Join-Path $RootDir "apps\$($jdk17Meta.Dir)"
-    if (Test-Path $jdk17Dir) {
-        $env:JAVA_HOME = $jdk17Dir
-        $env:PATH = "$(Join-Path $jdk17Dir 'bin');$env:PATH"
+    if (-not (Confirm-ToolReady -RootDir $RootDir -ToolKey "jdk17" -ToolMeta $jdk17Meta)) {
+        throw "Android SDK 依賴 OpenJDK 17，但自動安裝失敗。"
     }
-    cmd /c "echo y| `"$sdkManager`" --update"
+
+    Set-SandboxEnvironment -RootDir $RootDir
+    $env:ANDROID_HOME      = $targetDir
+    $env:ANDROID_USER_HOME = Join-Path $RootDir "data\.android"
+    $jdk17Dir              = Join-Path $RootDir "apps\$($jdk17Meta.Dir)"
+    $env:JAVA_HOME         = $jdk17Dir
+    $env:PATH              = "$(Join-Path $jdk17Dir 'bin');$env:PATH"
+
+    Write-Status -Level "INFO" -Message "正在自動接受授權並安裝/更新 platform-tools (ADB)..."
+    # 連續送出 15 個 y 以自動同意所有 SDK 授權條款
+    cmd /c "(for /l %i in (1,1,15) do @echo y) | `"$sdkManager`" --licenses >nul 2>&1"
+    cmd /c "(for /l %i in (1,1,15) do @echo y) | `"$sdkManager`" `"platform-tools`" --update"
 }
 
 Complete-ToolInstall -RootDir $RootDir -DirName $meta.Dir -Version $ver
-Write-Host "[TIP] 進入 Android 除錯環境後，可執行 'sdkmanager platform-tools' 安裝 ADB！" -ForegroundColor Cyan
+Write-Status -Level "TIP" -Message "已內建 platform-tools，進入環境後可直接使用 adb 與 fastboot！"

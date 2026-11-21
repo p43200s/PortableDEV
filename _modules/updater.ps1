@@ -1,85 +1,85 @@
 ﻿$ErrorActionPreference = "Stop"
 $RootDir = if ($env:PORTABLE_DEV_ROOT) { $env:PORTABLE_DEV_ROOT } else { Split-Path -Parent $PSScriptRoot }
-if (-not (Get-Module -Name "PortableCore")) {
-    Import-Module (Join-Path $PSScriptRoot "core.psm1") -Force
-}
+
+if (-not (Get-Module -Name "ui"))   { Import-Module (Join-Path $PSScriptRoot "ui.psm1") -Global }
+if (-not (Get-Module -Name "core")) { Import-Module (Join-Path $PSScriptRoot "core.psm1") -Global }
+
 Initialize-PortableDirs -RootDir $RootDir
 
 $toolsCfg    = Get-ToolsConfig -RootDir $RootDir
 $orderedKeys = @($toolsCfg.Keys | Sort-Object { if ($toolsCfg[$_].Order) { $toolsCfg[$_].Order } else { 999 } })
 
-function Format-PadRight {
-    param([string]$Text, [int]$Width)
-    $visWidth = 0
-    foreach ($char in $Text.ToCharArray()) {
-        if ([int]$char -gt 255) { $visWidth += 2 } else { $visWidth += 1 }
-    }
-    $pad = [Math]::Max(0, $Width - $visWidth)
-    return $Text + (" " * $pad)
-}
-
 function Invoke-PortableCleanup {
-    Write-Host "`n================ 清理暫存與舊版殘留資料夾 ================" -ForegroundColor Cyan
+    $div = Get-LineDivider
+    Write-Host ""
+    Write-Host $div -ForegroundColor DarkCyan
+    Write-Host " 清理暫存與舊版殘留資料夾（自動保留 7zr.exe）" -ForegroundColor Cyan
+    Write-Host $div -ForegroundColor DarkCyan
 
     $cacheDir = Join-Path $RootDir "apps\_cache"
     $cacheSizeMB = 0
+    $cleanableCacheItems = @()
     if (Test-Path $cacheDir) {
-        $cacheItems = Get-ChildItem -Path $cacheDir -Recurse -File -ErrorAction SilentlyContinue
-        if ($cacheItems) {
-            $cacheSizeMB = [Math]::Round(($cacheItems | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
+        $cleanableCacheItems = @(Get-ChildItem -Path $cacheDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne "7zr.exe" })
+        $cacheFiles = @($cleanableCacheItems | Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue)
+        $directFiles = @($cleanableCacheItems | Where-Object { -not $_.PSIsContainer })
+        $allFiles = $cacheFiles + $directFiles
+        if ($allFiles.Count -gt 0) {
+            $cacheSizeMB = [Math]::Round(($allFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
         }
     }
-    Write-Host "  [快取目錄] apps\_cache 目前佔用約 $cacheSizeMB MB" -ForegroundColor Gray
+    Write-Status -Level "INFO" -Message "快取目錄 (apps\_cache) 可清理空間約 $cacheSizeMB MB（7zr.exe 將保留）"
 
     $appsDir = Join-Path $RootDir "apps"
-    $validDirs = @("_cache", "_bin") + ($orderedKeys | ForEach-Object { $toolsCfg[$_].Dir })
-    $obsoleteDirs = @(Get-ChildItem -Path $appsDir -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notin $validDirs })
+    $validDirs = @("_cache") + ($orderedKeys | ForEach-Object { $toolsCfg[$_].Dir })
+    $obsoleteDirs = @()
+    if (Test-Path $appsDir) {
+        $obsoleteDirs = @(Get-ChildItem -Path $appsDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notin $validDirs })
+    }
 
     if ($obsoleteDirs.Count -gt 0) {
-        Write-Host "  [發現舊版] 以下資料夾已不在目前架構清單中，可安全移除：" -ForegroundColor Yellow
+        Write-Status -Level "WARN" -Message "發現已不在目前架構清單中的舊版資料夾（可安全移除）："
         foreach ($od in $obsoleteDirs) {
-            Write-Host "    - $($od.Name)" -ForegroundColor Yellow
+            Write-Status -Level "WARN" -Message "  - $($od.Name)"
         }
     }
 
     if ($cacheSizeMB -eq 0 -and $obsoleteDirs.Count -eq 0) {
-        Write-Host "`n[INFO] 環境非常乾淨，無需清理！" -ForegroundColor Green
+        Write-Host ""
+        Write-Status -Level "OK" -Message "環境非常乾淨，無需清理！"
         return
     }
 
-    $confirm = (Read-Host "`n確定要清空 _cache 並移除上述舊版資料夾嗎？(Y/N)").Trim()
+    Write-Host ""
+    $confirm = (Read-Host "確定要清理快取並移除上述舊版資料夾嗎？(Y/N)").Trim()
     if ($confirm -ine "Y") {
-        Write-Host "[INFO] 已取消清理動作。" -ForegroundColor Yellow
+        Write-Status -Level "WARN" -Message "已取消清理動作。"
         return
     }
 
-    if (Test-Path $cacheDir) {
-        Get-ChildItem -Path $cacheDir -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  [OK] 已清空 apps\_cache 暫存檔。" -ForegroundColor Green
+    if ($cleanableCacheItems.Count -gt 0) {
+        $cleanableCacheItems | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Status -Level "OK" -Message "已清理 apps\_cache 暫存檔（已保留 7zr.exe）。"
     }
 
     foreach ($od in $obsoleteDirs) {
         Clear-ToolDirectory -TargetDir $od.FullName
-        Write-Host "  [OK] 已移除舊版資料夾: $($od.Name)" -ForegroundColor Green
+        Write-Status -Level "OK" -Message "已移除舊版資料夾: $($od.Name)"
     }
 
-    Write-Host "========================================================" -ForegroundColor Cyan
+    Write-Host $div -ForegroundColor DarkCyan
 }
 
 while ($true) {
-    Clear-Host
-    Write-Host "============================================================================" -ForegroundColor Cyan
-    Write-Host "                   可攜式開發環境 - 版本檢查與更新中心" -ForegroundColor White
-    Write-Host "============================================================================" -ForegroundColor Cyan
-    Write-Host " 正在平行查詢線上最新版本，請稍候..." -ForegroundColor Yellow
+    Show-Header -Subtitle "工具更新中心" -RootDir $RootDir
+    Write-Status -Level "INFO" -Message "正在查詢線上最新版本，請稍候..."
 
     $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
     try {
         $iss.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass
-    } catch {
-        # 若受群組原則限制無法覆寫，則沿用父進程既有的 Bypass 權限
-    }
+    } catch {}
 
     $pool = [RunspaceFactory]::CreateRunspacePool(1, 8, $iss, $Host)
     $pool.Open()
@@ -99,12 +99,14 @@ while ($true) {
             $funcBody = if ($funcCmd) { $funcCmd.Definition } else { "" }
 
             [void]$ps.AddScript({
-                param($CoreB64, $ToolsCfg, $FuncBody, $Root, $Key)
+                param($UiB64, $CoreB64, $AppCfg, $FuncBody, $Root, $Key)
                 $ErrorActionPreference = "Stop"
                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
                 if (-not $FuncBody) { return "找不到腳本" }
                 try {
-                    $global:PortableToolsConfig = $ToolsCfg
+                    $global:PortableAppConfig = $AppCfg
+                    $uiSrc = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UiB64))
+                    New-Module -Name "PortableUI" -ScriptBlock ([ScriptBlock]::Create($uiSrc)) | Import-Module -Force
                     $coreSrc = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($CoreB64))
                     New-Module -Name "PortableCore" -ScriptBlock ([ScriptBlock]::Create($coreSrc)) | Import-Module -Force
                     $sb = [ScriptBlock]::Create($FuncBody)
@@ -116,7 +118,7 @@ while ($true) {
                     if ($msg -match "403|rate limit") { return "API達上限" }
                     return "錯誤: $msg"
                 }
-            }).AddArgument($global:PortableCoreSourceB64).AddArgument($toolsCfg).AddArgument($funcBody).AddArgument($RootDir).AddArgument($key)
+            }).AddArgument($global:PortableUISourceB64).AddArgument($global:PortableCoreSourceB64).AddArgument($global:PortableAppConfig).AddArgument($funcBody).AddArgument($RootDir).AddArgument($key)
         } else {
             $installer = Join-Path $PSScriptRoot "installers\$scriptName.ps1"
             [void]$ps.AddScript({
@@ -181,59 +183,35 @@ while ($true) {
         $idx++
     }
 
-    Clear-Host
-    Write-Host "============================================================================" -ForegroundColor Cyan
-    Write-Host "                   可攜式開發環境 - 版本檢查與更新中心" -ForegroundColor White
-    Write-Host "============================================================================" -ForegroundColor Cyan
+    Show-Header -Subtitle "工具更新中心" -RootDir $RootDir
+    $div = Get-LineDivider
 
-    $hId     = Format-PadRight "ID" 4
-    $hName   = Format-PadRight "工具名稱" 23
+    $hId     = Format-PadRight "ID" 5
+    $hName   = Format-PadRight "工具名稱" 25
     $hLocal  = Format-PadRight "本地版本" 16
     $hOnline = Format-PadRight "線上最新版本" 16
-    Write-Host " $hId | $hName | $hLocal | $hOnline | 狀態" -ForegroundColor White
-    Write-Host "----------------------------------------------------------------------------"
+    Write-Host " $hId │ $hName │ $hLocal │ $hOnline │ 狀態" -ForegroundColor White
+    Write-Host $div -ForegroundColor DarkGray
 
     foreach ($r in $records) {
         $isErrRow = ($r.Status -in @("查詢失敗", "API達上限", "找不到腳本")) -or ($r.Status -like "錯誤:*")
         $color = if ($r.Status -eq "可更新!") { "Green" } elseif ($r.Status -eq "未安裝") { "Yellow" } elseif ($isErrRow) { "Red" } else { "Gray" }
-        $cId     = Format-PadRight "[$($r.ID)]" 4
-        $cName   = Format-PadRight $r.Name 23
-        $cLocal  = Format-PadRight $r.LocalVer 16
-        $cOnline = Format-PadRight $r.OnlineVer 16
-        Write-Host " $cId | $cName | $cLocal | $cOnline | $($r.Status)" -ForegroundColor $color
+        $cId     = Format-PadRight ("[{0,2}]" -f $r.ID) 5
+        $cName   = Format-PadRight $r.Name 25 -Truncate
+        $cLocal  = Format-PadRight $r.LocalVer 16 -Truncate
+        $cOnline = Format-PadRight $r.OnlineVer 16 -Truncate
+        Write-Host " $cId │ $cName │ $cLocal │ $cOnline │ $($r.Status)" -ForegroundColor $color
     }
 
     $maxId = $records.Count
-    Write-Host "----------------------------------------------------------------------------"
-    Write-Host " [1-$maxId] 安裝或重裝   [A] 全部更新   [C] 清理快取/舊版   [R] 重整   [0] 返回主選單"
-    Write-Host "============================================================================" -ForegroundColor Cyan
+    Show-Footer -HintText " [1-$maxId] 安裝或重裝   [A] 全部更新   [C] 清理快取/舊版   [R] 重整   [0] 返回主選單"
 
     $sel = (Read-Host "請輸入指令").Trim()
     if ($sel -eq "0") { return }
     if ($sel -ieq "R") { continue }
-    if ($sel -ieq "O") {
-        $dumpScript = if ($PSScriptRoot) { Join-Path $PSScriptRoot "dev\code_dump.ps1" } else { "" }
-        if ($dumpScript -and (Test-Path $dumpScript)) {
-            & $dumpScript -RootDir $RootDir
-        } else {
-            Write-Host "`n[WARN] 目前為單一封裝模式，不支援匯出原始碼。" -ForegroundColor Yellow
-        }
-        Read-Host "`n按 Enter 鍵返回列表"
-        continue
-    }
-    if ($sel -ieq "B") {
-        $buildScript = if ($PSScriptRoot) { Join-Path $PSScriptRoot "dev\build.ps1" } else { "" }
-        if ($buildScript -and (Test-Path $buildScript)) {
-            & $buildScript -RootDir $RootDir
-        } else {
-            Write-Host "`n[WARN] 目前已是單一封裝執行檔，無需再次打包。" -ForegroundColor Yellow
-        }
-        Read-Host "`n按 Enter 鍵返回列表"
-        continue
-    }
     if ($sel -ieq "C") {
         Invoke-PortableCleanup
-        Read-Host "`n按 Enter 鍵返回列表"
+        Wait-UserPause
         continue
     }
 
@@ -246,7 +224,8 @@ while ($true) {
 
     if ($targets.Count -gt 0) {
         foreach ($t in $targets) {
-            Write-Host "`n>>> 正在處理: $($t.Name) <<<" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Status -Level "STEP" -Message "正在處理: $($t.Name)"
             try {
                 $meta       = $toolsCfg[$t.Key]
                 $scriptName = if ($meta.Installer) { $meta.Installer } else { $t.Key }
@@ -258,10 +237,11 @@ while ($true) {
                     & $installer -RootDir $RootDir -ToolKey $t.Key -Mode "install"
                 }
             } catch {
-                Write-Host "[ERROR] $($t.Name) 處理失敗: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Status -Level "ERR" -Message "$($t.Name) 處理失敗: $($_.Exception.Message)"
             }
         }
-        Write-Host "`n[INFO] 作業結束！" -ForegroundColor Green
-        Read-Host "按 Enter 鍵返回列表"
+        Write-Host ""
+        Write-Status -Level "OK" -Message "作業結束！"
+        Wait-UserPause
     }
 }

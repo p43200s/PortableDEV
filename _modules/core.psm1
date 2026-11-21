@@ -22,12 +22,27 @@ function Restore-BaseEnvironment {
     }
 }
 
-function Get-ToolsConfig {
-    param([string]$RootDir)
-    if ($global:PortableToolsConfig) {
-        return $global:PortableToolsConfig
+function Get-AppConfig {
+    param([string]$RootDir = $env:PORTABLE_DEV_ROOT)
+    if ($global:PortableAppConfig) {
+        return $global:PortableAppConfig
     }
-    return Import-PowerShellDataFile (Join-Path $RootDir "_modules\tools.psd1")
+    $psdPath = Join-Path $RootDir "_modules\tools.psd1"
+    if (Test-Path $psdPath) {
+        $global:PortableAppConfig = Import-PowerShellDataFile $psdPath
+        return $global:PortableAppConfig
+    }
+    throw "找不到設定檔: $psdPath"
+}
+
+function Get-AppVersion {
+    param([string]$RootDir = $env:PORTABLE_DEV_ROOT)
+    return (Get-AppConfig -RootDir $RootDir).AppVer
+}
+
+function Get-ToolsConfig {
+    param([string]$RootDir = $env:PORTABLE_DEV_ROOT)
+    return (Get-AppConfig -RootDir $RootDir).Tools
 }
 
 function Get-ToolMeta {
@@ -54,11 +69,11 @@ function Set-SandboxEnvironment {
 function Initialize-PortableDirs {
     param([string]$RootDir)
     $dirs = @(
-        "workspace", "data", "apps", "apps\_cache", "apps\_bin",
+        "workspace", "data", "apps", "apps\_cache",
         "data\Documents", "data\Documents\WindowsPowerShell",
         "data\AppData\Roaming", "data\AppData\Local",
         "data\agy-home", "data\.npm-global", "data\.npm-cache",
-        "data\.config", "data\.python-user",
+        "data\.config", "data\.uv", "data\.uv\bin", "data\.uv\python",
         "data\vscode\user-data\User", "data\vscode\extensions"
     )
     foreach ($d in $dirs) {
@@ -69,12 +84,13 @@ function Initialize-PortableDirs {
     }
 }
 
-function Get-WinPythonExe {
+function Get-UvPythonExe {
     param([string]$RootDir)
-    $wpyMeta   = Get-ToolMeta -RootDir $RootDir -ToolKey "winpython"
-    $wpyAppDir = Join-Path $RootDir "apps\$($wpyMeta.Dir)"
-    if (-not (Test-Path $wpyAppDir)) { return $null }
-    return Get-ChildItem -Path $wpyAppDir -Filter "python.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $uvPyRoot = Join-Path $RootDir "data\.uv\python"
+    if (-not (Test-Path $uvPyRoot)) { return $null }
+    return Get-ChildItem -Path $uvPyRoot -Filter "python.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1
 }
 
 function Initialize-VSCodeConfig {
@@ -126,18 +142,17 @@ function Get-CachedPackage {
     $tmpFile = "$pkgFile.tmp"
 
     if ((Test-Path $pkgFile) -and ((Get-Item $pkgFile).Length -gt 0)) {
-        Write-Host "[CACHE] 命中本地快取 ($FileName)，跳過下載！" -ForegroundColor Green
+        Write-Status -Level "CACHE" -Message "找到本地快取 ($FileName)，跳過下載！"
         return $pkgFile
     }
 
     if ((Test-Path $tmpFile) -and ((Get-Item $tmpFile).Length -gt 0)) {
         $resumeMB = [Math]::Round((Get-Item $tmpFile).Length / 1MB, 2)
-        Write-Host "[INFO] 偵測到未完成暫存檔 ($resumeMB MB)，接續下載 $DisplayName..." -ForegroundColor Yellow
+        Write-Status -Level "INFO" -Message "偵測到未完成暫存檔 ($resumeMB MB)，接續下載 $DisplayName..."
     } else {
-        Write-Host "[INFO] 正在下載 $DisplayName..." -ForegroundColor Cyan
+        Write-Status -Level "INFO" -Message "正在下載 $DisplayName..."
     }
 
-    # 使用 Windows 內建 curl.exe 支援斷點續傳 (-C -) 與自動重導向 (-L)
     & curl.exe -L -f -C - --progress-bar "$Url" -o "$tmpFile"
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpFile) -or ((Get-Item $tmpFile).Length -eq 0)) {
         throw "下載 $DisplayName 失敗或中斷（暫存檔已保留，下次執行可接續下載）。"
@@ -159,6 +174,8 @@ function Clear-ToolDirectory {
     }
 
     try {
+        # 先移除內部檔案的唯讀/系統/隱藏屬性，避免 PortableGit 等工具重裝時刪除失敗
+        cmd /c "attrib -r -s -h `"$TargetDir\*`" /s /d" 2>$null
         Remove-Item -Path $TargetDir -Recurse -Force -ErrorAction Stop
     } catch {
         throw "無法清除目標資料夾 [$TargetDir]，請確認該工具的相關視窗或背景程式已完全關閉後再試。"
@@ -167,10 +184,14 @@ function Clear-ToolDirectory {
 
 function Get-7ZipPath {
     param([string]$RootDir)
-    $exe = Join-Path $RootDir "apps\_bin\7zr.exe"
+    $cacheDir = Join-Path $RootDir "apps\_cache"
+    if (-not (Test-Path $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
+    $exe = Join-Path $cacheDir "7zr.exe"
     if (-not (Test-Path $exe) -or ((Get-Item $exe).Length -eq 0)) {
         $tmpExe = "$exe.tmp"
-        Write-Host "[INFO] 正在下載獨立版解壓工具 7zr.exe..." -ForegroundColor Cyan
+        Write-Status -Level "INFO" -Message "正在下載解壓縮工具 7zr.exe..."
         & curl.exe -L -f -C - --progress-bar "https://www.7-zip.org/a/7zr.exe" -o "$tmpExe"
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpExe) -or ((Get-Item $tmpExe).Length -eq 0)) {
             throw "下載 7zr.exe 失敗。"
@@ -189,7 +210,7 @@ function Complete-ToolInstall {
     )
     $targetDir = Join-Path $RootDir "apps\$DirName"
     Set-Content -Path (Join-Path $targetDir "version.txt") -Value $Version -Encoding ASCII
-    Write-Host "[SUCCESS] $DirName ($Version) 安裝完成！" -ForegroundColor Green
+    Write-Status -Level "OK" -Message "$DirName ($Version) 安裝完成！"
 }
 
 function Confirm-ToolReady {
@@ -204,7 +225,7 @@ function Confirm-ToolReady {
         return $true
     }
 
-    Write-Host "[WARN] 尚未安裝 $($ToolMeta.Name)，正在啟動自動安裝..." -ForegroundColor Yellow
+    Write-Status -Level "WARN" -Message "尚未安裝 $($ToolMeta.Name)，正在啟動自動安裝..."
     $scriptName = if ($ToolMeta.Installer) { $ToolMeta.Installer } else { $ToolKey }
     $memFunc    = "Invoke-Installer_$scriptName"
     $installer  = Join-Path $RootDir "_modules\installers\$scriptName.ps1"
@@ -216,7 +237,7 @@ function Confirm-ToolReady {
         & $installer -RootDir $RootDir -ToolKey $ToolKey -Mode "install"
         return (Test-Path $targetDir)
     } else {
-        Write-Host "[ERROR] 找不到安裝腳本或內建模組: $scriptName" -ForegroundColor Red
+        Write-Status -Level "ERR" -Message "找不到安裝腳本或內建模組: $scriptName"
         return $false
     }
 }
@@ -226,14 +247,12 @@ function Mount-PortableProfile {
         [string]$RootDir,
         [string[]]$ToolKeys
     )
-    # 每次掛載前先還原至乾淨的基礎環境，避免多次切換選單導致變數殘留或 PATH 重複疊加
     Restore-BaseEnvironment
 
     $toolsCfg = Get-ToolsConfig -RootDir $RootDir
     $wsDir    = Join-Path $RootDir "workspace"
     $dataDir  = Join-Path $RootDir "data"
 
-    # 統一設定 data 為沙盒家目錄
     Set-SandboxEnvironment -RootDir $RootDir
 
     $addedPaths = @()
@@ -245,23 +264,6 @@ function Mount-PortableProfile {
         }
 
         $appDir = Join-Path $RootDir "apps\$($meta.Dir)"
-
-        if ($key -eq "winpython") {
-            $pyExe = Get-WinPythonExe -RootDir $RootDir
-            if ($pyExe) {
-                $pyDir = $pyExe.DirectoryName
-                Repair-PythonPathsIfMoved -PyDir $pyDir
-                $addedPaths += $pyDir
-                $addedPaths += (Join-Path $pyDir "Scripts")
-
-                # 預先掛載 PYTHONUSERBASE 的 Scripts 目錄，確保新安裝的 CLI 工具立即可用
-                [Environment]::SetEnvironmentVariable("PYTHONUSERBASE", (Join-Path $dataDir ".python-user"), "Process")
-                $userScripts = & $pyExe.FullName -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))" 2>$null
-                if ($userScripts) {
-                    $addedPaths += $userScripts.Trim()
-                }
-            }
-        }
 
         foreach ($rel in $meta.Paths) {
             if ($rel -like "{DATA}*") {
@@ -286,51 +288,16 @@ function Mount-PortableProfile {
     $env:PATH = ($addedPaths -join ";") + ";" + $env:PATH
 }
 
-function Repair-PythonPathsIfMoved {
-    param([string]$PyDir)
-    $realPyDir = [System.IO.Path]::GetFullPath($PyDir)
-    $pyExe = Join-Path $realPyDir "python.exe"
-    if (-not (Test-Path $pyExe)) { return }
-
-    $markerFile = Join-Path $realPyDir "last_path.txt"
-    $lastPath = if (Test-Path $markerFile) { (Get-Content $markerFile -First 1).Trim() } else { "" }
-
-    if ($lastPath -eq $realPyDir) { return }
-
-    Write-Host "[INFO] 偵測到 Python 路徑變更 ($realPyDir)，正在自動修正啟動器路徑..." -ForegroundColor Yellow
-
-    $fixCode = @"
-import os, sys, glob
-scripts_dir = os.path.join(sys.prefix, 'Scripts')
-target_exe = sys.executable.encode('mbcs')
-if os.path.exists(scripts_dir):
-    for exe in glob.glob(os.path.join(scripts_dir, '*.exe')):
-        try:
-            with open(exe, 'rb') as f:
-                data = f.read()
-            idx = data.rfind(b'#!')
-            if idx != -1 and b'python.exe' in data[idx:]:
-                end = data.find(b'\r\n', idx)
-                if end != -1:
-                    new_shebang = b'#!' + target_exe + b'\r\n'
-                    if data[idx:end+2] != new_shebang:
-                        with open(exe, 'wb') as f:
-                            f.write(data[:idx] + new_shebang + data[end+2:])
-        except Exception:
-            pass
-"@
-    & $pyExe -c $fixCode
-
-    Set-Content -Path $markerFile -Value $realPyDir -Encoding UTF8
-    Write-Host "[OK] Python 啟動器路徑已同步更新！" -ForegroundColor Green
-}
-
 function Test-PortableEnvironment {
     param(
         [string]$RootDir,
         [string[]]$ToolKeys
     )
-    Write-Host "`n=================== 環境自我檢測報告 ===================" -ForegroundColor Cyan
+    $div = Get-LineDivider
+    Write-Host "`n$div" -ForegroundColor DarkCyan
+    Write-Host " 環境自我檢測報告" -ForegroundColor Cyan
+    Write-Host $div -ForegroundColor DarkCyan
+
     $toolsCfg = Get-ToolsConfig -RootDir $RootDir
     $hasError = $false
 
@@ -346,7 +313,6 @@ function Test-PortableEnvironment {
         if ($cmdInfo -and ($cmdInfo.Source -like "*$RootDir*")) {
             $rawOut = cmd /c "`"$($cmdInfo.Source)`" $cmdArgs 2>&1"
             $lines  = @($rawOut | Where-Object { $_ -and $_.ToString().Trim() -ne "" })
-            # sdkmanager 會在版本號前印出多行棄用警告，故取最後一行真正的版本資訊
             $verOut = if ($key -eq "android") {
                 ($lines | Select-Object -Last 1).ToString().Trim()
             } else {
@@ -360,18 +326,32 @@ function Test-PortableEnvironment {
         }
     }
 
-    Write-Host "--------------------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  沙盒家目錄   : $env:USERPROFILE" -ForegroundColor Gray
-    Write-Host "  NPM 全域目錄 : $env:NPM_CONFIG_PREFIX" -ForegroundColor Gray
-    if ($env:GEMINI_CLI_HOME) {
-        Write-Host "  Agy 設定目錄 : $env:GEMINI_CLI_HOME" -ForegroundColor Gray
+    Write-Host $div -ForegroundColor DarkGray
+    Write-Host "  沙盒家目錄    : $env:USERPROFILE" -ForegroundColor Gray
+    Write-Host "  NPM 全域目錄  : $env:NPM_CONFIG_PREFIX" -ForegroundColor Gray
+    if ($env:UV_PYTHON_INSTALL_DIR) {
+        Write-Host "  UV Python目錄 : $env:UV_PYTHON_INSTALL_DIR" -ForegroundColor Gray
     }
-    Write-Host "========================================================`n" -ForegroundColor Cyan
+    if ($env:GEMINI_CLI_HOME) {
+        Write-Host "  Agy 設定目錄  : $env:GEMINI_CLI_HOME" -ForegroundColor Gray
+    }
+    Write-Host "$div`n" -ForegroundColor DarkCyan
 
     if ($hasError) {
-        Write-Host "[WARN] 偵測到部分工具路徑異常，請檢查上方 [FAIL] 訊息。" -ForegroundColor Yellow
-        Read-Host "按 Enter 鍵繼續啟動（或按 Ctrl+C 中止）"
+        Write-Status -Level "WARN" -Message "偵測到部分工具路徑異常，請檢查上方 [FAIL] 訊息。"
+        Wait-UserPause -Message "<< 按 Enter 鍵繼續啟動（或按 Ctrl+C 中止） >>"
     }
 }
 
-Export-ModuleMember -Function Restore-BaseEnvironment, Get-ToolsConfig, Get-ToolMeta, Set-SandboxEnvironment, Initialize-PortableDirs, Get-WinPythonExe, Initialize-VSCodeConfig, Get-CachedPackage, Clear-ToolDirectory, Get-7ZipPath, Complete-ToolInstall, Confirm-ToolReady, Mount-PortableProfile, Repair-PythonPathsIfMoved, Test-PortableEnvironment
+function Get-GitHubLatestTag {
+    param([string]$Repo)
+    $latestUrl = "https://github.com/$Repo/releases/latest"
+    # 利用 curl.exe 僅抓取標頭並追蹤重導向 (-sIL)，從最終有效網址 (%{url_effective}) 擷取版號
+    $effectiveUrl = & curl.exe -sIL -o NUL -w "%{url_effective}" "$latestUrl"
+    if ($LASTEXITCODE -eq 0 -and $effectiveUrl -match '/releases/tag/([^/\s]+)$') {
+        return $Matches[1]
+    }
+    throw "無法從 GitHub 取得 $Repo 最新版本資訊"
+}
+
+Export-ModuleMember -Function Restore-BaseEnvironment, Get-AppConfig, Get-AppVersion, Get-ToolsConfig, Get-ToolMeta, Set-SandboxEnvironment, Initialize-PortableDirs, Get-UvPythonExe, Initialize-VSCodeConfig, Get-CachedPackage, Clear-ToolDirectory, Get-7ZipPath, Complete-ToolInstall, Confirm-ToolReady, Mount-PortableProfile, Test-PortableEnvironment, Get-GitHubLatestTag

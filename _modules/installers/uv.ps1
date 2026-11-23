@@ -30,10 +30,11 @@ Remove-Item $tmpDir -Recurse -Force
 
 Set-SandboxEnvironment -RootDir $RootDir
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $RootDir "data\.uv\python"
+$env:UV_PYTHON_BIN_DIR     = Join-Path $RootDir "data\.local\bin"
 $env:UV_CACHE_DIR          = Join-Path $RootDir "data\.uv\cache"
 $uvExe = Join-Path $targetDir "uv.exe"
 
 Write-Status -Level "INFO" -Message "正在透過 uv 檢查並安裝受管 Python 環境至沙盒..."
-& $uvExe python install
+& $uvExe python install --default
 
 Complete-ToolInstall -RootDir $RootDir -DirName $meta.Dir -Version $ver

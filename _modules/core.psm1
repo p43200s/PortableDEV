@@ -70,10 +70,10 @@ function Initialize-PortableDirs {
     param([string]$RootDir)
     $dirs = @(
         "workspace", "data", "apps", "apps\_cache",
-        "data\Documents", "data\Documents\WindowsPowerShell",
+        "data\Desktop", "data\Downloads", "data\Documents", "data\Documents\WindowsPowerShell",
         "data\AppData\Roaming", "data\AppData\Local",
         "data\agy-home", "data\.npm-global", "data\.npm-cache",
-        "data\.config", "data\.uv", "data\.uv\bin", "data\.uv\python",
+        "data\.config", "data\.local\bin", "data\.uv", "data\.uv\python",
         "data\vscode\user-data\User", "data\vscode\extensions"
     )
     foreach ($d in $dirs) {

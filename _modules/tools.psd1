@@ -1,6 +1,6 @@
 ﻿@{
     AppName = "可攜式開發環境啟動器"
-    AppVer  = "0.2.1"
+    AppVer  = "0.3.0"
 
     Tools = @{
         git = @{
@@ -34,14 +34,15 @@
             Order     = 40
             Name      = "uv (Python Manager)"
             Dir       = "UV"
-            Paths     = @("", "{DATA}\.uv\bin")
+            Paths     = @("", "{DATA}\.local\bin")
             Env       = @{
                 UV_CACHE_DIR          = "{DATA}\.uv\cache"
                 UV_PYTHON_INSTALL_DIR = "{DATA}\.uv\python"
+                UV_PYTHON_BIN_DIR     = "{DATA}\.local\bin"
                 UV_TOOL_DIR           = "{DATA}\.uv\tools"
-                UV_TOOL_BIN_DIR       = "{DATA}\.uv\bin"
+                UV_TOOL_BIN_DIR       = "{DATA}\.local\bin"
             }
-            VerifyCmd = "uv --version"
+            VerifyCmd = "python --version"
         }
         nodejs = @{
             Order     = 50
@@ -57,14 +58,16 @@
         }
         android = @{
             Order     = 60
-            Name      = "Android SDK"
-            Dir       = "AndroidSDK"
-            Paths     = @("cmdline-tools\latest\bin", "emulator", "platform-tools")
+            Name      = "Android CLI"
+            Dir       = "Android"
+            Paths     = @("cmdline-tools\latest", "cmdline-tools\latest\bin", "emulator", "platform-tools")
             Env       = @{
                 ANDROID_HOME      = "{APP}"
+                ANDROID_SDK_HOME  = "{DATA}"
                 ANDROID_USER_HOME = "{DATA}\.android"
+                ADB_VENDOR_KEYS   = "{DATA}\.android\adbkey"
             }
-            VerifyCmd = "sdkmanager --version"
+            VerifyCmd = "android --version"
         }
         vscode = @{
             Order     = 70

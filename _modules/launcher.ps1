@@ -106,7 +106,7 @@ while ($true) {
     Write-Host "  [1] VS Code       (JDK 25 + uv Python + Node + Git + Agy + VSCode)"
     Write-Host "  [2] CMD 控制台    (JDK 25 + uv Python + Node + Git + Agy)"
     Write-Host "  [3] PowerShell    (JDK 25 + uv Python + Node + Git + Agy)"
-    Write-Host "  [4] Android 除錯  (JDK 17 + uv Python + Android SDK)"
+    Write-Host "  [4] Android 除錯  (JDK 17 + uv Python + Android CLI)"
     Write-Host ""
     Write-Host "  [U] 工具更新中心" -ForegroundColor Yellow
 
@@ -174,6 +174,45 @@ while ($true) {
                 cmd.exe /k "title $($selected.Title)"
             }
             { $_ -in "3", "4" } {
+                if ($choice -eq "4") {
+                    # 取得宿主機真實使用者家目錄，避免受沙盒環境變數干擾
+                    $realHostProfile   = [Environment]::GetFolderPath("UserProfile")
+                    $hostAndroidDir    = Join-Path $realHostProfile ".android"
+                    $sandboxAndroidDir = Join-Path $RootDir "data\.android"
+
+                    if (-not (Test-Path $sandboxAndroidDir)) {
+                        New-Item -ItemType Directory -Path $sandboxAndroidDir -Force | Out-Null
+                    }
+
+                    $needLink = $true
+                    if (Test-Path -LiteralPath $hostAndroidDir) {
+                        $item = Get-Item -LiteralPath $hostAndroidDir -Force
+                        if ($item.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+                            if ($item.Target -contains $sandboxAndroidDir) {
+                                $needLink = $false
+                            } else {
+                                cmd /c rmdir "`"$hostAndroidDir`"" 2>$null | Out-Null
+                            }
+                        } else {
+                            # 若原本存在實體資料夾，先將內部金鑰搶救備份進沙盒再移除實體目錄
+                            & adb kill-server 2>$null | Out-Null
+                            Copy-Item -Path (Join-Path $hostAndroidDir "*") -Destination $sandboxAndroidDir -Recurse -Force -ErrorAction SilentlyContinue
+                            Remove-Item -Path $hostAndroidDir -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+
+                    if ($needLink) {
+                        # 改用 PowerShell 原生管線 | Out-Null 丟棄輸出，避免觸發 >nul 的 FileStream 裝置錯誤
+                        cmd /c mklink /J "`"$hostAndroidDir`"" "`"$sandboxAndroidDir`"" 2>$null | Out-Null
+
+                        # 容錯機制：若位於非 NTFS 隨身碟導致 Junction 建立失敗，自動退回實體檔案同步
+                        if (-not (Test-Path -LiteralPath $hostAndroidDir)) {
+                            New-Item -ItemType Directory -Path $hostAndroidDir -Force | Out-Null
+                            Copy-Item -Path (Join-Path $sandboxAndroidDir "adbkey*") -Destination $hostAndroidDir -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+
                 Write-Status -Level "OK" -Message "已進入 PowerShell 環境（輸入 exit 可返回主選單）`n"
                 powershell.exe -NoLogo -NoProfile -NoExit -Command "`$Host.UI.RawUI.WindowTitle = '$($selected.Title)'"
             }
